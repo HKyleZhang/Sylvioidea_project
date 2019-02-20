@@ -7,9 +7,9 @@ usage() {
   echo "Usage: [-a] alignment folder
        [-b] trees folder
        [-c] use codon model
-       [-d] distance metirc: "kc\(Kendall-Colijn\)", "pd\(Probabilistic distance\)"
+       [-d] distance metirc: "gd\(Geodesic\)", "kc\(Kendall-Colijn\)", "pd\(Probabilistic distance\)"
        [-h] show usage
-       [-L] a lambda between 0 and 1; NA in Probabilistic distance
+       [-L] a lambda between 0 and 1; NA in Geodesic and Probabilistic distance
        [-m] cluster method: "ward\(Default\)", "kmeans", "MDSK", "pam", "MDSP", "NMDSK"
        [-k] infer optimal number of clusters: "gori\(Default\)", "clustree"
        [-o] specify outgroup
@@ -318,38 +318,55 @@ Clustering='if (!require(treespace)) install.packages("treespace")
 if (!require(heatmap3)) install.packages("heatmap3")
 if (!require(cluster)) install.packages("cluster")
 if (!require(smacof)) install.packages("smacof")
+if (!require(distory)) install.packages("distory")
+if (!require(phangorn)) install.packages("phangorn")
+
 trees <- read.tree("gnTrees_collection.tre")
 cluster_number <- length(trees)
-L <- args1
-res <- treespace(trees, method = "treeVec", nf = 2, lambda = L, return.tree.vectors = TRUE)
-if ("args2" == "ward") {
-   kc_distance <- res$D
+
+if ("args1" == "KC_distance") {
+	L <- args2
+    KC_res <- treespace(trees, method = "treeVec", nf = 2, lambda = L, return.tree.vectors = TRUE)
+    distance <- KC_res$D
+} else if ("args1" == "Geodesic_distance") {
+	geod <- dist.multiPhylo(trees)
+    wrfd <- wRF.dist(trees)
+
+    wrfd <- as.matrix(wrfd)
+    treename<- rownames(wrfd)
+    geod <- as.matrix(geod)
+    rownames(geod) <- treename
+    colnames(geod) <- treename
+    distance <- as.dist(geod)
+}
+
+if ("args3" == "ward") {
    ##################################################
    # Hierachichal clustering with MDS visualization
    ##################################################
-   mdsres2D <- smacofSym(kc_distance, ndim = 2, type = "ratio")
+   mdsres2D <- smacofSym(distance, ndim = 2, type = "ratio")
    treMDS2D <- as.data.frame(mdsres2D$conf)
    write.table(treMDS2D, file = "2-MDS.coord", col.names = FALSE, quote = FALSE)
    write.table(mdsres2D$stress, file = "2-MDS.stress", col.names = FALSE, quote = FALSE)
-   mdsres3D <- smacofSym(kc_distance, ndim = 3, type = "ratio")
+   mdsres3D <- smacofSym(distance, ndim = 3, type = "ratio")
    treMDS3D <- as.data.frame(mdsres3D$conf)
    write.table(treMDS3D, file = "3-MDS.coord", col.names = FALSE, quote = FALSE)
    write.table(mdsres3D$stress, file = "3-MDS.stress", col.names = FALSE, quote = FALSE)
-   kc_distance.hclust <- hclust(kc_distance, method = "ward.D2")
+   distance.hclust <- hclust(distance, method = "ward.D2")
    svg("dendrogram.svg", width=10, height=10)
-   plot(kc_distance.hclust, cex = 0.6)
+   plot(distance.hclust, cex = 0.6)
    dev.off()
-   kc_distance_matrix <- as.matrix(kc_distance)
+   distance_matrix <- as.matrix(distance)
    svg("heatmap.svg", width=12, height=12)
-   heatmap3(kc_distance_matrix, Rowv = as.dendrogram(kc_distance.hclust), symm = TRUE)
+   heatmap3(distance_matrix, Rowv = as.dendrogram(distance.hclust), symm = TRUE)
    dev.off()
-   dend_label_raw <- as.data.frame(kc_distance.hclust$labels)
-   dend_label <- dend_label_raw$`kc_distance.hclust$labels`[order.dendrogram(as.dendrogram(kc_distance.hclust))]
+   dend_label_raw <- as.data.frame(distance.hclust$labels)
+   dend_label <- dend_label_raw$`distance.hclust$labels`[order.dendrogram(as.dendrogram(distance.hclust))]
    dend_label <- as.data.frame(dend_label)
    write.table(dend_label,file = "dend.order", quote = FALSE, col.names = FALSE, row.names = FALSE)
    if (cluster_number > 15){cluster_number<-15}
    for(j in 1:cluster_number){
-      cl <- cutree(kc_distance.hclust, k = j)
+      cl <- cutree(distance.hclust, k = j)
        if (j < 10){
           j=paste("0",j,sep= "")
           nj=paste("k",j,".cl",sep = "")
@@ -362,10 +379,10 @@ if ("args2" == "ward") {
 ###########################
 # K-means on tree vectors
 ###########################
-if ("args2" == "kmeans") {
-    treMDS <- res$pco$li
+if (("args1" == "KC_distance") & ("args3" == "kmeans")) {
+    treMDS <- KC_res$pco$li
     write.table(treMDS, file = "2-MDS.coord", col.names = FALSE, quote = FALSE)
-    treVec <- res$vectors
+    treVec <- KC_res$vectors
     if (cluster_number > 15){
    	  cluster_number <- 15
     } else {
@@ -385,13 +402,12 @@ if ("args2" == "kmeans") {
 ##################################################################
 # Multi-Dimensional scaling down to 2D and 3D, K-means on 3D MDS
 ##################################################################
-if ("args2" == "MDSK") {
-	kc_distance <- res$D
-    mdsres2D <- smacofSym(kc_distance, ndim = 2, type = "ratio")
+if ("args3" == "MDSK") {
+    mdsres2D <- smacofSym(distance, ndim = 2, type = "ratio")
     treMDS2D <- as.data.frame(mdsres2D$conf)
     write.table(treMDS2D, file = "2-MDS.coord", col.names = FALSE, quote = FALSE)
     write.table(mdsres2D$stress, file = "2-MDS.stress", col.names = FALSE, quote = FALSE)
-    mdsres3D <- smacofSym(kc_distance, ndim = 3, type = "ratio")
+    mdsres3D <- smacofSym(distance, ndim = 3, type = "ratio")
     treMDS3D <- as.data.frame(mdsres3D$conf)
     write.table(treMDS3D, file = "3-MDS.coord", col.names = FALSE, quote = FALSE)
     write.table(mdsres3D$stress, file = "3-MDS.stress", col.names = FALSE, quote = FALSE)
@@ -414,15 +430,14 @@ if ("args2" == "MDSK") {
 ##############################################
 # PAM on the distance/dissimilarities matrix
 ##############################################
-if ("args2" == "pam") {
-    kc_distance <- res$D
+if ("args3" == "pam") {
     if (cluster_number > 15){
    	  cluster_number <- 15
     } else {
       cluster_number <- cluster_number - 1
     }
     for (j in 1: cluster_number){
-        kc.pam <- pam(kc_distance, diss = TRUE, k = j, cluster.only = TRUE)
+        kc.pam <- pam(distance, diss = TRUE, k = j, cluster.only = TRUE)
         if (j < 10){
           j=paste("0",j,sep= "")
           nj=paste("k",j,".cl",sep = "")
@@ -435,13 +450,12 @@ if ("args2" == "pam") {
 ##############################################################
 # Multi-Dimensional scaling down to 2D and 3D, PAM on 3D MDS
 ##############################################################
-if ("args2" == "MDSP") {
-	kc_distance <- res$D
-    mdsres2D <- smacofSym(kc_distance, ndim = 2, type = "ratio")
+if ("args3" == "MDSP") {
+    mdsres2D <- smacofSym(distance, ndim = 2, type = "ratio")
     treMDS2D <- as.data.frame(mdsres2D$conf)
     write.table(treMDS2D, file = "2-MDS.coord", col.names = FALSE, quote = FALSE)
     write.table(mdsres2D$stress, file = "2-MDS.stress", col.names = FALSE, quote = FALSE)
-    mdsres3D <- smacofSym(kc_distance, ndim = 3, type = "ratio")
+    mdsres3D <- smacofSym(distance, ndim = 3, type = "ratio")
     treMDS3D <- as.data.frame(mdsres3D$conf)
     write.table(treMDS3D, file = "3-MDS.coord", col.names = FALSE, quote = FALSE)
     write.table(mdsres3D$stress, file = "3-MDS.stress", col.names = FALSE, quote = FALSE)
@@ -464,9 +478,8 @@ if ("args2" == "MDSP") {
 ###############################################################
 # Non-metric Multi-Dimensional scaling down to 2D and K-means
 ###############################################################
-if ("args2" == "NMDSK") {
-	kc_distance <- res$D
-    mdsres2D <- smacofSym(kc_distance, ndim = 2, type = "ordinal")
+if ("args3" == "NMDSK") {
+    mdsres2D <- smacofSym(distance, ndim = 2, type = "ordinal")
     treMDS2D <- as.data.frame(mdsres2D$conf)
     write.table(treMDS2D, file = "2-MDS.coord", col.names = FALSE, quote = FALSE)
     write.table(mdsres2D$stress, file = "2-MDS.stress", col.names = FALSE, quote = FALSE)
@@ -597,7 +610,7 @@ write.table(res, file = "potent_knum", quote = FALSE, col.names = FALSE, row.nam
 ######################################################################################
 # R code 5. Compute square of difference between alternative model and optimal model
 ######################################################################################
-dAICcCalculator='if (!require(foreach)) install.packages("foreach")
+dBICCalculator='if (!require(foreach)) install.packages("foreach")
 if (!require(doParallel)) install.packages("doParallel")
 number_cores <- detectCores()
 registerDoParallel(number_cores)
@@ -651,7 +664,7 @@ write.table(dm,"dist_matrix.txt", quote = F)
 '
 
 ###############################################################
-# R code 8. Hierarchical clustering on Probabilistic distance
+# R code 9. Hierarchical clustering on Probabilistic distance
 ###############################################################
 ClusteringProbdist='if (!require(ape)) install.packages("ape")
 if (!require(heatmap3)) install.packages("heatmap3")
@@ -768,6 +781,9 @@ fi
 # Check if probabilistic distance is used
 if [[ "${distance_metric}" == "pd" ]] || [[ "${distance_metric}" == "pd_ex" ]]; then
   distance_metric_display="Probabilistic distance"
+  lambda="NA"
+elif [[ "${distance_metric}" == "gd" ]]; then
+  distance_metric_display="Geodesic distance"
   lambda="NA"
 elif [[ "${distance_metric}" == "kc" ]]; then
   distance_metric_display="Kendall-Colijn metric"
@@ -936,7 +952,7 @@ Part ${step}. Gene trees construction"
     mkdir ${work_dir}/${folder_name} ${work_dir}/${folder_name}/report ${work_dir}/${folder_name}/trivia ${work_dir}/${folder_name}/bs-file
     bs_setting="-bb 1000 -bnni -wbtl" #Perform Ultra Fast Bootstrapping with 1000 replicates.
     cd ${work_dir}/${aln_folder}/
-    parallel --no-notice -j ${thread} "iqtree -s {} ${codon_model_flag} -AICc -ninit 200 -ntop 50 -nt 1 -seed ${iqtree_seed_number} ${bs_setting} -keep-ident -quiet" ::: *.phy
+    parallel --no-notice -j ${thread} "iqtree -s {} ${codon_model_flag} -ninit 200 -ntop 50 -nt 1 -seed ${iqtree_seed_number} ${bs_setting} -keep-ident -quiet" ::: *.phy
 
     # File sorting
     mv ${work_dir}/${aln_folder}/*ufboot ${work_dir}/${folder_name}/bs-file
@@ -949,7 +965,7 @@ Part ${step}. Gene trees construction"
   # Extract the model information
   for i in ${work_dir}/${folder_name}/report/*iqtree; do
     name=$(basename ${i} | cut -d "." -f 1-2)
-    model=$(cat ${i} | grep "Best-fit model according to AICc:" | cut -d " " -f 6)
+    model=$(cat ${i} | grep "Best-fit model according to BIC:" | cut -d " " -f 6)
     echo -e "${name}\t${model}" >>${work_dir}/${aln_folder}/iq-modelset
   done
 
@@ -958,7 +974,7 @@ Part ${step}. Gene trees construction"
   mkdir ${work_dir}/report-temp
   for i in ${work_dir}/${folder_name}/report/*iqtree; do
     name=$(basename ${i} | cut -d "." -f 1)
-    cat ${i} | grep -A${model_number} "List of models sorted by AICc scores:" >${work_dir}/report-temp/${name}
+    cat ${i} | grep -A${model_number} "List of models sorted by BIC scores:" >${work_dir}/report-temp/${name}
   done
   rm -rf ${work_dir}/report-temp2
   mkdir ${work_dir}/report-temp2
@@ -976,7 +992,7 @@ Part ${step}. Gene trees construction"
   done
   rm -rf ${work_dir}/report-temp2
   cd ${work_dir}/report-model/
-  Rscript <(echo "${dAICcCalculator}") 2>&1 >/dev/null
+  Rscript <(echo "${dBICCalculator}") 2>&1 >/dev/null
   rm -rf ${work_dir}/report-model/*model
   rm -rf ${work_dir}/report-temp
   mkdir ${work_dir}/report-temp
@@ -1219,8 +1235,11 @@ Time stamp: ${time_stamp}
       done
       ProbabilisticDistanceCalculator ${work_dir} ${probdist_type} ${exact_distance}
     fi
+  elif [[ "${distance_metric}" == "gd" ]]; then
+    Clustering_temp=$(echo "${Clustering}" | sed "s/args1/Geodesic_distance/g" | sed "s/args3/${cluster_method}/")
+    Rscript <(echo "${Clustering_temp}") 2>&1 >/dev/null
   elif [[ "${distance_metric}" == "kc" ]]; then
-    Clustering_temp=$(echo "${Clustering}" | sed "s/args1/${lambda}/" | sed "s/args2/${cluster_method}/")
+    Clustering_temp=$(echo "${Clustering}" | sed "s/args1/KC_distance/g" | sed "s/args2/${lambda}/" | sed "s/args3/${cluster_method}/")
     Rscript <(echo "${Clustering_temp}") 2>&1 >/dev/null
   fi
 
