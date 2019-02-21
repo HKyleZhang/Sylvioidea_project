@@ -5,7 +5,7 @@
 ######################
 usage() {
   echo "Usage: [-a] alignment folder
-       [-b] trees folder
+       [-b] number of bootstrapping datasets
        [-c] use codon model
        [-d] distance metirc: "gd\(Geodesic\)", "kc\(Kendall-Colijn\)", "pd\(Probabilistic distance\)"
        [-h] show usage
@@ -14,8 +14,9 @@ usage() {
        [-k] infer optimal number of clusters: "gori\(Default\)", "clustree"
        [-o] specify outgroup
        [-p] "f" to use fast method; "s" to use slow method; only valid if [-c]
-       [-t] number of threads
-       [-s] seed number for all tree construction"
+       [-t] trees folder
+       [-s] seed number for all tree construction
+       [-x] number of threads"
 }
 
 #########################################################
@@ -47,9 +48,9 @@ AfterTreesConstruction() {
 # Function 3. Make permutation datasets from the output of fseqboot
 ####################################################################
 MakeDatasets() {
-  echo -e "The seed for the generation of the 100-replicate permutation data is: ${3}." >impMsg.txt
+  echo -e "The seed for the generation of the ${bs_num}-replicate permutation data is: ${3}." >impMsg.txt
   i=1
-  j=$((i + 100))
+  j=$((i + bs_num))
   file_number=1
   percent=5
   rm -rf ${1}/permutation_data
@@ -314,327 +315,486 @@ PhylipFormat() {
 ##########################
 # R code 1. Get clusters
 ##########################
-Clustering='if (!require(treespace)) install.packages("treespace")
-if (!require(heatmap3)) install.packages("heatmap3")
-if (!require(cluster)) install.packages("cluster")
-if (!require(smacof)) install.packages("smacof")
-if (!require(distory)) install.packages("distory")
-if (!require(phangorn)) install.packages("phangorn")
-
+Clustering='require(ape)
 trees <- read.tree("gnTrees_collection.tre")
 cluster_number <- length(trees)
-
 if ("args1" == "KC_distance") {
-	L <- args2
-    KC_res <- treespace(trees, method = "treeVec", nf = 2, lambda = L, return.tree.vectors = TRUE)
-    distance <- KC_res$D
+  require(treespace)
+  L <- args2
+  KC_res <-
+    treespace(
+      trees,
+      method = "treeVec",
+      nf = 2,
+      lambda = L,
+      return.tree.vectors = TRUE
+    )
+  distance <- KC_res$D
 } else if ("args1" == "Geodesic_distance") {
-	geod <- dist.multiPhylo(trees)
-    wrfd <- wRF.dist(trees)
-
-    wrfd <- as.matrix(wrfd)
-    treename<- rownames(wrfd)
-    geod <- as.matrix(geod)
-    rownames(geod) <- treename
-    colnames(geod) <- treename
-    distance <- as.dist(geod)
+  require(distory)
+  require(phangorn)
+  geod <- dist.multiPhylo(trees)
+  wrfd <- wRF.dist(trees)
+  
+  wrfd <- as.matrix(wrfd)
+  treename <- rownames(wrfd)
+  geod <- as.matrix(geod)
+  rownames(geod) <- treename
+  colnames(geod) <- treename
+  distance <- as.dist(geod)
 }
 
 if ("args3" == "ward") {
-   ##################################################
-   # Hierachichal clustering with MDS visualization
-   ##################################################
-   mdsres2D <- smacofSym(distance, ndim = 2, type = "ratio")
-   treMDS2D <- as.data.frame(mdsres2D$conf)
-   write.table(treMDS2D, file = "2-MDS.coord", col.names = FALSE, quote = FALSE)
-   write.table(mdsres2D$stress, file = "2-MDS.stress", col.names = FALSE, quote = FALSE)
-   mdsres3D <- smacofSym(distance, ndim = 3, type = "ratio")
-   treMDS3D <- as.data.frame(mdsres3D$conf)
-   write.table(treMDS3D, file = "3-MDS.coord", col.names = FALSE, quote = FALSE)
-   write.table(mdsres3D$stress, file = "3-MDS.stress", col.names = FALSE, quote = FALSE)
-   distance.hclust <- hclust(distance, method = "ward.D2")
-   svg("dendrogram.svg", width=10, height=10)
-   plot(distance.hclust, cex = 0.6)
-   dev.off()
-   distance_matrix <- as.matrix(distance)
-   svg("heatmap.svg", width=12, height=12)
-   heatmap3(distance_matrix, Rowv = as.dendrogram(distance.hclust), symm = TRUE)
-   dev.off()
-   dend_label_raw <- as.data.frame(distance.hclust$labels)
-   dend_label <- dend_label_raw$`distance.hclust$labels`[order.dendrogram(as.dendrogram(distance.hclust))]
-   dend_label <- as.data.frame(dend_label)
-   write.table(dend_label,file = "dend.order", quote = FALSE, col.names = FALSE, row.names = FALSE)
-   if (cluster_number > 15){cluster_number<-15}
-   for(j in 1:cluster_number){
-      cl <- cutree(distance.hclust, k = j)
-       if (j < 10){
-          j=paste("0",j,sep= "")
-          nj=paste("k",j,".cl",sep = "")
-        } else {
-          nj=paste("k",j,".cl",sep = "")
-        }
-      write.table(cl, nj, quote = FALSE, col.names = FALSE)
+  ##################################################
+  # Hierachichal clustering with MDS visualization
+  ##################################################
+  require(smacof)
+  require(heatmap3)
+  mdsres2D <- smacofSym(distance, ndim = 2, type = "ratio")
+  treMDS2D <- as.data.frame(mdsres2D$conf)
+  write.table(treMDS2D,
+              file = "2-MDS.coord",
+              col.names = FALSE,
+              quote = FALSE)
+  write.table(
+    mdsres2D$stress,
+    file = "2-MDS.stress",
+    col.names = FALSE,
+    quote = FALSE
+  )
+  mdsres3D <- smacofSym(distance, ndim = 3, type = "ratio")
+  treMDS3D <- as.data.frame(mdsres3D$conf)
+  write.table(treMDS3D,
+              file = "3-MDS.coord",
+              col.names = FALSE,
+              quote = FALSE)
+  write.table(
+    mdsres3D$stress,
+    file = "3-MDS.stress",
+    col.names = FALSE,
+    quote = FALSE
+  )
+  distance.hclust <- hclust(distance, method = "ward.D2")
+  svg("dendrogram.svg", width = 10, height = 10)
+  plot(distance.hclust, cex = 0.6)
+  dev.off()
+  distance_matrix <- as.matrix(distance)
+  svg("heatmap.svg", width = 12, height = 12)
+  heatmap3(distance_matrix,
+           Rowv = as.dendrogram(distance.hclust),
+           symm = TRUE)
+  dev.off()
+  dend_label_raw <- as.data.frame(distance.hclust$labels)
+  dend_label <-
+    dend_label_raw$`distance.hclust$labels`[order.dendrogram(as.dendrogram(distance.hclust))]
+  dend_label <- as.data.frame(dend_label)
+  write.table(
+    dend_label,
+    file = "dend.order",
+    quote = FALSE,
+    col.names = FALSE,
+    row.names = FALSE
+  )
+  if (cluster_number > 15) {
+    cluster_number <- 15
+  }
+  for (j in 1:cluster_number) {
+    cl <- cutree(distance.hclust, k = j)
+    if (j < 10) {
+      j = paste("0", j, sep = "")
+      nj = paste("k", j, ".cl", sep = "")
+    } else {
+      nj = paste("k", j, ".cl", sep = "")
     }
+    write.table(cl, nj, quote = FALSE, col.names = FALSE)
+  }
 }
 ###########################
 # K-means on tree vectors
 ###########################
 if (("args1" == "KC_distance") & ("args3" == "kmeans")) {
-    treMDS <- KC_res$pco$li
-    write.table(treMDS, file = "2-MDS.coord", col.names = FALSE, quote = FALSE)
-    treVec <- KC_res$vectors
-    if (cluster_number > 15){
-   	  cluster_number <- 15
+  treMDS <- KC_res$pco$li
+  write.table(treMDS,
+              file = "2-MDS.coord",
+              col.names = FALSE,
+              quote = FALSE)
+  treVec <- KC_res$vectors
+  if (cluster_number > 15) {
+    cluster_number <- 15
+  } else {
+    cluster_number <- cluster_number - 1
+  }
+  for (j in 1:cluster_number) {
+    kc.km <- kmeans(treVec, centers = j, nstart = 50)
+    if (j < 10) {
+      j = paste("0", j, sep = "")
+      nj = paste("k", j, ".cl", sep = "")
     } else {
-      cluster_number <- cluster_number - 1
+      nj = paste("k", j, ".cl", sep = "")
     }
-    for (j in 1: cluster_number){
-       kc.km <- kmeans(treVec, centers = j, nstart = 50)
-       if (j < 10){
-          j=paste("0",j,sep= "")
-          nj=paste("k",j,".cl",sep = "")
-        } else {
-          nj=paste("k",j,".cl",sep = "")
-        }
-        write.table(kc.km$cluster, nj, quote = FALSE, col.names = FALSE)
-    }
+    write.table(kc.km$cluster, nj, quote = FALSE, col.names = FALSE)
+  }
 }
 ##################################################################
 # Multi-Dimensional scaling down to 2D and 3D, K-means on 3D MDS
 ##################################################################
 if ("args3" == "MDSK") {
-    mdsres2D <- smacofSym(distance, ndim = 2, type = "ratio")
-    treMDS2D <- as.data.frame(mdsres2D$conf)
-    write.table(treMDS2D, file = "2-MDS.coord", col.names = FALSE, quote = FALSE)
-    write.table(mdsres2D$stress, file = "2-MDS.stress", col.names = FALSE, quote = FALSE)
-    mdsres3D <- smacofSym(distance, ndim = 3, type = "ratio")
-    treMDS3D <- as.data.frame(mdsres3D$conf)
-    write.table(treMDS3D, file = "3-MDS.coord", col.names = FALSE, quote = FALSE)
-    write.table(mdsres3D$stress, file = "3-MDS.stress", col.names = FALSE, quote = FALSE)
-    if (cluster_number > 15){
-       cluster_number <- 15
+  require(smacof)
+  mdsres2D <- smacofSym(distance, ndim = 2, type = "ratio")
+  treMDS2D <- as.data.frame(mdsres2D$conf)
+  write.table(treMDS2D,
+              file = "2-MDS.coord",
+              col.names = FALSE,
+              quote = FALSE)
+  write.table(
+    mdsres2D$stress,
+    file = "2-MDS.stress",
+    col.names = FALSE,
+    quote = FALSE
+  )
+  mdsres3D <- smacofSym(distance, ndim = 3, type = "ratio")
+  treMDS3D <- as.data.frame(mdsres3D$conf)
+  write.table(treMDS3D,
+              file = "3-MDS.coord",
+              col.names = FALSE,
+              quote = FALSE)
+  write.table(
+    mdsres3D$stress,
+    file = "3-MDS.stress",
+    col.names = FALSE,
+    quote = FALSE
+  )
+  if (cluster_number > 15) {
+    cluster_number <- 15
+  } else {
+    cluster_number <- cluster_number - 1
+  }
+  for (j in 1:cluster_number) {
+    kc.km <- kmeans(treMDS3D, centers = j, nstart = 50)
+    if (j < 10) {
+      j = paste("0", j, sep = "")
+      nj = paste("k", j, ".cl", sep = "")
     } else {
-       cluster_number <- cluster_number - 1
+      nj = paste("k", j, ".cl", sep = "")
     }
-    for (j in 1: cluster_number){
-        kc.km <- kmeans(treMDS3D, centers = j, nstart = 50)
-        if (j < 10){
-           j=paste("0",j,sep= "")
-           nj=paste("k",j,".cl",sep = "")
-        } else {
-           nj=paste("k",j,".cl",sep = "")
-        }
-        write.table(kc.km$cluster, nj, quote = FALSE, col.names = FALSE)
-    }
+    write.table(kc.km$cluster, nj, quote = FALSE, col.names = FALSE)
+  }
 }
 ##############################################
 # PAM on the distance/dissimilarities matrix
 ##############################################
 if ("args3" == "pam") {
-    if (cluster_number > 15){
-   	  cluster_number <- 15
+  require(cluster)
+  if (cluster_number > 15) {
+    cluster_number <- 15
+  } else {
+    cluster_number <- cluster_number - 1
+  }
+  for (j in 1:cluster_number) {
+    kc.pam <- pam(distance,
+                  diss = TRUE,
+                  k = j,
+                  cluster.only = TRUE)
+    if (j < 10) {
+      j = paste("0", j, sep = "")
+      nj = paste("k", j, ".cl", sep = "")
     } else {
-      cluster_number <- cluster_number - 1
+      nj = paste("k", j, ".cl", sep = "")
     }
-    for (j in 1: cluster_number){
-        kc.pam <- pam(distance, diss = TRUE, k = j, cluster.only = TRUE)
-        if (j < 10){
-          j=paste("0",j,sep= "")
-          nj=paste("k",j,".cl",sep = "")
-        } else {
-          nj=paste("k",j,".cl",sep = "")
-        }
-        write.table(kc.pam, nj, quote = FALSE, col.names = FALSE)
-    }
+    write.table(kc.pam, nj, quote = FALSE, col.names = FALSE)
+  }
 }
 ##############################################################
 # Multi-Dimensional scaling down to 2D and 3D, PAM on 3D MDS
 ##############################################################
 if ("args3" == "MDSP") {
-    mdsres2D <- smacofSym(distance, ndim = 2, type = "ratio")
-    treMDS2D <- as.data.frame(mdsres2D$conf)
-    write.table(treMDS2D, file = "2-MDS.coord", col.names = FALSE, quote = FALSE)
-    write.table(mdsres2D$stress, file = "2-MDS.stress", col.names = FALSE, quote = FALSE)
-    mdsres3D <- smacofSym(distance, ndim = 3, type = "ratio")
-    treMDS3D <- as.data.frame(mdsres3D$conf)
-    write.table(treMDS3D, file = "3-MDS.coord", col.names = FALSE, quote = FALSE)
-    write.table(mdsres3D$stress, file = "3-MDS.stress", col.names = FALSE, quote = FALSE)
-    if (cluster_number > 15){
-       cluster_number <- 15
+  require(smacof)
+  require(cluster)
+  mdsres2D <- smacofSym(distance, ndim = 2, type = "ratio")
+  treMDS2D <- as.data.frame(mdsres2D$conf)
+  write.table(treMDS2D,
+              file = "2-MDS.coord",
+              col.names = FALSE,
+              quote = FALSE)
+  write.table(
+    mdsres2D$stress,
+    file = "2-MDS.stress",
+    col.names = FALSE,
+    quote = FALSE
+  )
+  mdsres3D <- smacofSym(distance, ndim = 3, type = "ratio")
+  treMDS3D <- as.data.frame(mdsres3D$conf)
+  write.table(treMDS3D,
+              file = "3-MDS.coord",
+              col.names = FALSE,
+              quote = FALSE)
+  write.table(
+    mdsres3D$stress,
+    file = "3-MDS.stress",
+    col.names = FALSE,
+    quote = FALSE
+  )
+  if (cluster_number > 15) {
+    cluster_number <- 15
+  } else {
+    cluster_number <- cluster_number - 1
+  }
+  for (j in 1:cluster_number) {
+    kc.pam <- pam(treMDS3D,
+                  diss = FALSE,
+                  k = j,
+                  cluster.only = TRUE)
+    if (j < 10) {
+      j = paste("0", j, sep = "")
+      nj = paste("k", j, ".cl", sep = "")
     } else {
-       cluster_number <- cluster_number - 1
+      nj = paste("k", j, ".cl", sep = "")
     }
-    for (j in 1: cluster_number){
-        kc.pam <- pam(treMDS3D, diss = FALSE, k = j, cluster.only = TRUE)
-        if (j < 10){
-           j=paste("0",j,sep= "")
-           nj=paste("k",j,".cl",sep = "")
-        } else {
-           nj=paste("k",j,".cl",sep = "")
-        }
-        write.table(kc.pam, nj, quote = FALSE, col.names = FALSE)
-    }
+    write.table(kc.pam, nj, quote = FALSE, col.names = FALSE)
+  }
 }
 ###############################################################
 # Non-metric Multi-Dimensional scaling down to 2D and K-means
 ###############################################################
 if ("args3" == "NMDSK") {
-    mdsres2D <- smacofSym(distance, ndim = 2, type = "ordinal")
-    treMDS2D <- as.data.frame(mdsres2D$conf)
-    write.table(treMDS2D, file = "2-MDS.coord", col.names = FALSE, quote = FALSE)
-    write.table(mdsres2D$stress, file = "2-MDS.stress", col.names = FALSE, quote = FALSE)
-    if (cluster_number > 15){
-       cluster_number <- 15
+  require(smacof)
+  mdsres2D <- smacofSym(distance, ndim = 2, type = "ordinal")
+  treMDS2D <- as.data.frame(mdsres2D$conf)
+  write.table(treMDS2D,
+              file = "2-MDS.coord",
+              col.names = FALSE,
+              quote = FALSE)
+  write.table(
+    mdsres2D$stress,
+    file = "2-MDS.stress",
+    col.names = FALSE,
+    quote = FALSE
+  )
+  if (cluster_number > 15) {
+    cluster_number <- 15
+  } else {
+    cluster_number <- cluster_number - 1
+  }
+  for (j in 1:cluster_number) {
+    kc.km <- kmeans(treMDS2D, centers = j, nstart = 50)
+    if (j < 10) {
+      j = paste("0", j, sep = "")
+      nj = paste("k", j, ".cl", sep = "")
     } else {
-       cluster_number <- cluster_number - 1
+      nj = paste("k", j, ".cl", sep = "")
     }
-    for (j in 1: cluster_number){
-        kc.km <- kmeans(treMDS2D, centers = j, nstart = 50)
-        if (j < 10){
-           j=paste("0",j,sep= "")
-           nj=paste("k",j,".cl",sep = "")
-        } else {
-           nj=paste("k",j,".cl",sep = "")
-        }
-        write.table(kc.km$cluster, nj, quote = FALSE, col.names = FALSE)
-    }
-}'
+    write.table(kc.km$cluster, nj, quote = FALSE, col.names = FALSE)
+  }
+}
+'
 
 ################################################################
 # R code 2. Format table for visualization of permutation test
 ################################################################
-loglkhImprovementMake='out.file <- ""
+loglkhImprovementMake='bs_num <- args1
+out.file <- ""
 file.names <- dir(pattern = "logLhcollection")
-for(i in 1:length(file.names)){
+for (i in 1:length(file.names)) {
   file <- read.table(file.names[i])
   out.file <- cbind(out.file, file)
 }
 write.csv(out.file, file = "logLkhcollection.csv")
 da <- read.csv("logLkhcollection.csv")
-actual_data <- read.table("aln_concatenation_logLkhcollection", header = FALSE)
-da <- cbind(actual_data,da[,3:102])
-permutation_data_number <- seq(1:100)
+actual_data <-
+  read.table("aln_concatenation_logLkhcollection", header = FALSE)
+da <- cbind(actual_data, da[, 3:(bs_num + 2)])
+permutation_data_number <- seq(1:bs_num)
 names(da) <- c("Actual.data", permutation_data_number)
 rownum <- nrow(da)
-for(i in 1:rownum){
-	da[i,] <- 0 - (da[i,] / 10000)
+for (i in 1:rownum) {
+  da[i, ] <- 0 - (da[i, ] / 10000)
 }
 permutation_data_header <- rep(" ", rownum)
-kindex <- seq(1: rownum)
-out.file <- cbind(kindex,da$Actual.data,permutation_data_header,da[,2:101])
-names(out.file) <- c("k","Actual data","Permutation data",permutation_data_number)
+kindex <- seq(1:rownum)
+out.file <-
+  cbind(kindex, da$Actual.data, permutation_data_header, da[, 2:(bs_num + 1)])
+names(out.file) <-
+  c("k", "Actual data", "Permutation data", permutation_data_number)
 write.csv(out.file, file = "logLkhcollection.csv", row.names = FALSE)
-for(k in 1:(rownum - 1)){
-  da[k,] <- da[k+1,] - da[k,]
+for (k in 1:(rownum - 1)) {
+  da[k, ] <- da[k + 1, ] - da[k, ]
 }
-da <- rbind(da[1:(rownum - 1),])
+da <- rbind(da[1:(rownum - 1), ])
 dkindex <- seq(1:(rownum - 1))
-permutation_data_mean <- apply(cbind(da[,2:101]), 1, mean)
-permutation_data_sd <- apply(cbind(da[,2:101]), 1, sd)
-daforR <- cbind(dkindex,da$Actual.data,permutation_data_mean,permutation_data_sd,da[,2:101])
-names(daforR) <- c("dk","Actual data","Average","SD",permutation_data_number)
-write.csv(daforR,file = "logLkhforR.csv", row.names = FALSE)'
+permutation_data_mean <- apply(cbind(da[, 2:(bs_num + 1)]), 1, mean)
+permutation_data_sd <- apply(cbind(da[, 2:(bs_num + 1)]), 1, sd)
+daforR <-
+  cbind(dkindex,
+        da$Actual.data,
+        permutation_data_mean,
+        permutation_data_sd,
+        da[, 2:(bs_num + 1)])
+names(daforR) <-
+  c("dk", "Actual data", "Average", "SD", permutation_data_number)
+write.csv(daforR, file = "logLkhforR.csv", row.names = FALSE)'
 
 #############################################
 # R code 3. Plot graph for permutation test
 #############################################
-loglkhImprovementPlot='if (!require(ggplot2)) install.packages("ggplot2")
-if (!require(tidyr)) install.packages("tidyr")
+loglkhImprovementPlot='require(tidyverse)
+bs_num <- args1
 loglkh_data <- read.csv("logLkhforR.csv")
-a <- loglkh_data[,2:3]
-write.csv(a,file = "a.csv")
+a <- loglkh_data[, 2:3]
+write.csv(a, file = "a.csv")
 a <- read.csv("a.csv")
-a$X <- c("k01","k02","k03","k04","k05","k06","k07","k08","k09","k10","k11","k12","k13","k14")
+if (nrow(a) < 10) {
+  k_label <- paste("k", "0", 1:nrow(a), sep = "")
+} else {
+  k_label_part1 <- paste("k", "0", 1:9, sep = "")
+  k_label_part2 <- paste("k", 10:nrow(a), sep = "")
+  k_label <- c(k_label_part1, k_label_part2)
+}
+a$X <- k_label
 a <- as.data.frame(a)
-names(a) <- c("cluster_num","Actual.data","Average")
+names(a) <- c("cluster_num", "Actual.data", "Average")
 loglkh_data <- t(loglkh_data)
-b <- loglkh_data[5:104,]
+b <- loglkh_data[5:(bs_num + 4), ]
 write.csv(b, file = "b.csv")
 b <- read.csv("b.csv")
-names(b) <- c("X","k01","k02","k03","k04","k05","k06","k07","k08","k09","k10","k11","k12","k13","k14")
-num <- seq(1:100)
+names(b) <- c("X", k_label)
+num <- seq(1:bs_num)
 b$X <- num
-bb <- b[,2:14]
+bb <- b[, 2:nrow(a)]
 write.csv(bb, file = "b.csv")
-a <- gather(a,group,dk,Actual.data:Average)
-b <- gather(b,cluster_num,dk,k01:k14)
-write.csv(a,file = "amd.csv")
-write.csv(b,file = "bmd.csv")
+a <- gather(a, group, dk, Actual.data:Average)
+b <- gather(b, cluster_num, dk, k_label)
+write.csv(a, file = "amd.csv")
+write.csv(b, file = "bmd.csv")
 a <- read.csv("amd.csv")
 a <- as.data.frame(a)
 b <- read.csv("bmd.csv")
 b <- as.data.frame(b)
-xlabel <- c("1→2", "2→3", "3→4", "4→5", "5→6", "6→7", "7→8", "8→9", "9→10", "10→11", "11→12", "12→13", "13→14", "14→15")
-bp <- ggplot(b,aes(cluster_num,dk)) + geom_boxplot(data=b,aes(cluster_num,dk), color="grey") + geom_point(data=a, aes(x=cluster_num,y=dk, group=group, color = group)) + geom_line(data=a, aes(x=cluster_num,y=dk, group = group, color = group)) + scale_x_discrete(labels = xlabel) + labs(x = "Number of clusters, k", y = "log Likelihood improvement") + theme(axis.text.x = element_text(size = 18, vjust = 0.5, angle = 45, family = "Calibri"), axis.title.x = element_text(size = 20, family = "Calibri"), axis.text.y = element_text(size = 18, family = "Calibri"), axis.title.y = element_text(size = 20, family = "Calibri"), legend.title = element_text(size = 20, family = "Calibri"), legend.text = element_text(size = 20, family = "Calibri")) + scale_color_manual(name = "Legend", values = c("firebrick2", "royalblue2"), labels = c("Actual data", "Permutation data mean"))
+xlabel <- "1→2"
+for (i in 2:length(k_label)) {
+  xlabel_temp <- paste(i, "→", i + 1, sep = "")
+  xlabel <- c(xlabel, xlabel_temp)
+}
+bp <- ggplot(b, aes(cluster_num, dk)) + geom_boxplot(data = b, aes(cluster_num, dk), color =
+                                                       "grey") + geom_point(data = a, aes(
+                                                         x = cluster_num,
+                                                         y = dk,
+                                                         group = group,
+                                                         color = group
+                                                       )) + geom_line(data = a, aes(
+                                                         x = cluster_num,
+                                                         y = dk,
+                                                         group = group,
+                                                         color = group
+                                                       )) + scale_x_discrete(labels = xlabel) + labs(x = "Number of clusters, k", y = "log Likelihood improvement") + theme(
+                                                         axis.text.x = element_text(
+                                                           size = 18,
+                                                           vjust = 0.5,
+                                                           angle = 45,
+                                                           family = "Calibri"
+                                                         ),
+                                                         axis.title.x = element_text(size = 20, family = "Calibri"),
+                                                         axis.text.y = element_text(size = 18, family = "Calibri"),
+                                                         axis.title.y = element_text(size = 20, family = "Calibri"),
+                                                         legend.title = element_text(size = 20, family = "Calibri"),
+                                                         legend.text = element_text(size = 20, family = "Calibri")
+                                                       ) + scale_color_manual(
+                                                         name = "Legend",
+                                                         values = c("firebrick2", "royalblue2"),
+                                                         labels = c("Actual data", "Permutation data mean")
+                                                       )
 pdf(NULL)
-ggsave("permutation_test.svg",bp, width = 14, height = 10)'
+ggsave("permutation_test.svg",
+       bp,
+       width = 14,
+       height = 10
+)'
 
 ####################################################
 # R code 4. A way to detect optimal cluster number
 ####################################################
 InferPotentialk='loglkh_data <- read.csv("logLkhforR.csv", header = TRUE)
-loglkh_data <- abs(loglkh_data[,2]-loglkh_data[,3])
+loglkh_data <- abs(loglkh_data[, 2] - loglkh_data[, 3])
 loglkh_min <- min(loglkh_data, na.rm = TRUE)
 min_index <- which(loglkh_data == loglkh_min)
-loglkh_percent <- seq(1:14)
-for (i in 1:13) {
-  loglkh_percent[i+1] <- loglkh_data[i+1]/loglkh_data[1]
+loglkh_percent <- seq(1:length(loglkh_data))
+for (i in 1:length(loglkh_data) - 1) {
+  loglkh_percent[i + 1] <- loglkh_data[i + 1] / loglkh_data[1]
 }
-res <- array("NA", 14)
+res <- array("NA", length(loglkh_data))
 j <- 1
 threshd <- 0.5
-for (i in 1:12){
-  if (i >= 2){
-    if (loglkh_percent[i] <= threshd){
-      a <- loglkh_data[i-1] - loglkh_data[i]
-      b <- loglkh_data[i] - loglkh_data[i+1]
+for (i in 1:(length(loglkh_data) - 1)) {
+  if (i >= 2) {
+    if (loglkh_percent[i] <= threshd) {
+      a <- loglkh_data[i - 1] - loglkh_data[i]
+      b <- loglkh_data[i] - loglkh_data[i + 1]
       if (b <= a) {
-        if (loglkh_percent[i+1] <= threshd){
-        res[j] <- i
-        j <- j+1
+        if (loglkh_percent[i + 1] <= threshd) {
+          res[j] <- i
+          j <- j + 1
         }
       }
     }
   }
   else {
-    if (loglkh_data[i] == loglkh_min){
+    if (loglkh_data[i] == loglkh_min) {
       res[j] <- i
-      j <- j+1
+      j <- j + 1
     }
   }
 }
 res <- res[res != "NA"]
 res <- as.data.frame(res)
-write.table(res, file = "potent_knum", quote = FALSE, col.names = FALSE, row.names = FALSE)'
+write.table(
+  res,
+  file = "potent_knum",
+  quote = FALSE,
+  col.names = FALSE,
+  row.names = FALSE
+)'
 
 ######################################################################################
 # R code 5. Compute square of difference between alternative model and optimal model
 ######################################################################################
-dBICCalculator='if (!require(foreach)) install.packages("foreach")
-if (!require(doParallel)) install.packages("doParallel")
+dBICCalculator='if (!require(foreach))
+  install.packages("foreach")
+if (!require(doParallel))
+  install.packages("doParallel")
 number_cores <- detectCores()
 registerDoParallel(number_cores)
 files <- list.files(pattern = "*model")
-foreach(i=files) %dopar% {
-    name <- strsplit(i, ".", fixed = TRUE)[[1]][1]
-    name <- paste(name, ".txt", sep = "")
+foreach(i = files) %dopar% {
+  name <- strsplit(i, ".", fixed = TRUE)[[1]][1]
+  name <- paste(name, ".txt", sep = "")
   dd <- read.table(i)
-  optimal_model <- dd[1,2]
-  for (k in 1:nrow(dd)){
-    dd[k,2] <- round(((dd[k,2] - optimal_model) ^ 2), 3)
+  optimal_model <- dd[1, 2]
+  for (k in 1:nrow(dd)) {
+    dd[k, 2] <- round(((dd[k, 2] - optimal_model) ^ 2), 3)
   }
-  write.table(dd[order(dd$V1),], file = name, quote = FALSE, row.names = FALSE, col.names = FALSE)
+  write.table(
+    dd[order(dd$V1), ],
+    file = name,
+    quote = FALSE,
+    row.names = FALSE,
+    col.names = FALSE
+  )
 }'
 
 ########################################################
 # R code 6. Find the single model for permutation test
 ########################################################
-InferSingleModel='if (!require(dplyr)) install.packages("dplyr")
+InferSingleModel='require(dplyr)
 dd <- read.table("model.summary")
-dd$sum_sq <- apply(dd[,2:ncol(dd)], 1, sum)
+dd$sum_sq <- apply(dd[, 2:ncol(dd)], 1, sum)
 dd <- arrange(dd, sum_sq)
-write.table(dd, "bestmodel.txt", quote = FALSE, row.names = FALSE, col.names = FALSE)
-'
+write.table(
+  dd,
+  "bestmodel.txt",
+  quote = FALSE,
+  row.names = FALSE,
+  col.names = FALSE
+  
+)'
 
 ###########################
 # R code 7. Permute array
@@ -642,34 +802,40 @@ write.table(dd, "bestmodel.txt", quote = FALSE, row.names = FALSE, col.names = F
 ArrayPermutation='array <- read.table("pos.array")
 seed_number <- seednumber
 set.seed(seed_number)
-for (i in 1:5){
-    seed_number <- seed_number + 1
-    set.seed(seed_number)
-	p <- sample(array)
-	name <- paste(i,".shuffle", sep="")
-	write.table(p, file = name, quote = FALSE, row.names = FALSE, col.names = FALSE)
-	}
-'
+for (i in 1:5) {
+  seed_number <- seed_number + 1
+  set.seed(seed_number)
+  p <- sample(array)
+  name <- paste(i, ".shuffle", sep = "")
+  write.table(
+    p,
+    file = name,
+    quote = FALSE,
+    row.names = FALSE,
+    col.names = FALSE
+  )
+}'
 
 ##################################
 # R code 8. Make ProbDist matrix
 ##################################
-ProbDistMatrix='if (!require(reshape2)) install.packages("reshape2")
+ProbDistMatrix='if (!require(reshape2))
+  install.packages("reshape2")
 dd <- read.table("tree_dist.prob")
-dd <- data.frame(dd$V1,dd$V2,dd$V7)
-names(dd) <- c("a","b","value")
-dm <- as.dist(acast(dd,b~a, value.var = "value"))
+dd <- data.frame(dd$V1, dd$V2, dd$V7)
+names(dd) <- c("a", "b", "value")
+dm <- as.dist(acast(dd, b ~ a, value.var = "value"))
 dm <- as.matrix(dm)
-write.table(dm,"dist_matrix.txt", quote = F)
-'
+write.table(dm, "dist_matrix.txt", quote = F
+)'
 
 ###############################################################
 # R code 9. Hierarchical clustering on Probabilistic distance
 ###############################################################
-ClusteringProbdist='if (!require(ape)) install.packages("ape")
-if (!require(heatmap3)) install.packages("heatmap3")
-if (!require(cluster)) install.packages("cluster")
-if (!require(smacof)) install.packages("smacof")
+ClusteringProbdist='if (!require(ape))
+  install.packages("ape")
+require(heatmap3)
+require(smacof)
 
 dm <- read.table("dist_matrix.txt", row.names = 1)
 dm <- as.dist(dm)
@@ -680,45 +846,68 @@ trees <- read.tree("gnTrees_collection.tre")
 cluster_number <- length(trees)
 mdsres2D <- smacofSym(dm, ndim = 2, type = "ratio")
 treMDS2D <- as.data.frame(mdsres2D$conf)
-write.table(treMDS2D, file = "2-MDS.coord", col.names = FALSE, quote = FALSE)
-write.table(mdsres2D$stress, file = "2-MDS.stress", col.names = FALSE, quote = FALSE)
+write.table(treMDS2D,
+            file = "2-MDS.coord",
+            col.names = FALSE,
+            quote = FALSE)
+write.table(
+  mdsres2D$stress,
+  file = "2-MDS.stress",
+  col.names = FALSE,
+  quote = FALSE
+)
 mdsres3D <- smacofSym(dm, ndim = 3, type = "ratio")
 treMDS3D <- as.data.frame(mdsres3D$conf)
-write.table(treMDS3D, file = "3-MDS.coord", col.names = FALSE, quote = FALSE)
-write.table(mdsres3D$stress, file = "3-MDS.stress", col.names = FALSE, quote = FALSE)
+write.table(treMDS3D,
+            file = "3-MDS.coord",
+            col.names = FALSE,
+            quote = FALSE)
+write.table(
+  mdsres3D$stress,
+  file = "3-MDS.stress",
+  col.names = FALSE,
+  quote = FALSE
+)
 dm.hclust <- hclust(dm, method = "ward.D2")
-svg("dendrogram.svg", width=10, height=10)
+svg("dendrogram.svg", width = 10, height = 10)
 plot(dm.hclust, cex = 0.6)
 dev.off()
 dm <- as.matrix(dm)
-svg("heatmap.svg", width=12, height=12)
+svg("heatmap.svg", width = 12, height = 12)
 heatmap3(dm, Rowv = as.dendrogram(dm.hclust), symm = TRUE)
 dev.off()
 dend_label_raw <- as.data.frame(dm.hclust$labels)
 dend_label <- dend_label_raw$`dm.hclust$labels`[order.dendrogram(as.dendrogram(dm.hclust))]
 dend_label <- as.data.frame(dend_label)
-write.table(dend_label,file = "dend.order", quote = FALSE, col.names = FALSE, row.names = FALSE)
-if (cluster_number > 15){cluster_number<-15}
-for(j in 1:cluster_number){
-    cl <- cutree(dm.hclust, k = j)
-    if (j < 10){
-        j=paste("0",j,sep= "")
-        nj=paste("k",j,".cl",sep = "")
-    } else {
-        nj=paste("k",j,".cl",sep = "")
-    }
-    write.table(cl, nj, quote = FALSE, col.names = FALSE)
+write.table(
+  dend_label,
+  file = "dend.order",
+  quote = FALSE,
+  col.names = FALSE,
+  row.names = FALSE
+)
+if (cluster_number > 15) {
+  cluster_number <- 15
 }
-'
+for (j in 1:cluster_number) {
+  cl <- cutree(dm.hclust, k = j)
+  if (j < 10) {
+    j = paste("0", j, sep = "")
+    nj = paste("k", j, ".cl", sep = "")
+  } else {
+    nj = paste("k", j, ".cl", sep = "")
+  }
+  write.table(cl, nj, quote = FALSE, col.names = FALSE)
+}'
 
 ###################################################
 # Pre-step: Load the flags and check the settings
 ###################################################
-while getopts "ha:b:cd:u:L:m:k:o:p:s:t:" opt; do
+while getopts "ha:b:cd:u:L:m:k:o:p:s:t:x:" opt; do
   case $opt in
   h) usage && exit ;;
   a) aln_folder=$(echo "${OPTARG}" | cut -d "/" -f 1) ;;
-  b) tree_folder=$(echo "${OPTARG}" | cut -d "/" -f 1) ;;
+  b) bs_num=${OPTARG} ;;
   c) codon_model="Yes" ;;
   d) distance_metric=${OPTARG} ;;
   L) lambda=${OPTARG} ;;
@@ -727,7 +916,8 @@ while getopts "ha:b:cd:u:L:m:k:o:p:s:t:" opt; do
   o) out_group=${OPTARG} ;;
   p) permutation_method=${OPTARG} ;;
   s) iqtree_seed_number=${OPTARG} ;;
-  t) thread=${OPTARG} ;;
+  t) tree_folder=$(echo "${OPTARG}" | cut -d "/" -f 1) ;;
+  x) thread=${OPTARG} ;;
   esac
 done
 
@@ -825,6 +1015,15 @@ if [[ -z "${infer_optimal_k}" ]]; then
   esac
 fi
 
+# Check if number of bootstrapping datasets is specified
+if [[ "${infer_optimal_k}" == "clustree" ]]; then
+	bs_num="NA"
+else
+	if [[ -z "${bs_num}" ]]; then
+		bs_num=100
+    fi
+fi
+
 # If number of thread isn't specified
 # detect the number of processors
 if [[ -z "${thread}" ]]; then
@@ -841,7 +1040,7 @@ fi
 resize -s 36 80 >/dev/null
 
 # Show the requirements and settings
-echo '
+Programme_header='
           _____
          / ____\          /|           _         _      /|
         / /    \|        | |          /_|       /_|    | |
@@ -853,17 +1052,17 @@ echo '
 ==================/ /===========================================================
 =================/ /==================================== U-l-t-i-m-a-t-e =======
                 /_/                                                         '
+echo "${Programme_header}"
 read -p " Files checklist: 1.Alignment folder
 
     Dependencies: 1.IQ-Tree               4.fseqboot
                   2.Newick Utilities      5.probdist
                   3.AMAS                  6.Rstudio
 
-      R packages: 1.treespace              6.smacof
-                  2.heatmap3               7.dplyr
-                  3.ggplot2                8.foreach
-                  4.reshape2               9.doParallel
-                  5.tidyr                 10.clustree
+      R packages: 1.treespace              5.smacof
+                  2.heatmap3               6.foreach
+                  3.tidyverse              7.doParallel
+                  4.reshape2               8.clustree
    *****************************************************************
       SETTINGS:
                  Alignment folder: ${aln_folder}
@@ -874,6 +1073,7 @@ read -p " Files checklist: 1.Alignment folder
                            Lambda: ${lambda}
                    Cluster method: ${cluster_method_display}
                   Infer optimal k: ${infer_optimal_k}
+       No. bootstrapping datasets: ${bs_num}
                           Threads: ${thread}
                              Seed: ${iqtree_seed_number}
    *****************************************************************
@@ -886,19 +1086,7 @@ Continue?(Y/n): " answer
 if [[ "${answer}" == "Y" ]] || [[ "${answer}" == "y" ]]; then
 
   # Generate output containing settings
-  echo '
-          _____
-         / ____\          /|           _         _      /|
-        / /    \|        | |          /_|       /_|    | |
-        \ \__  __      __| |__      __ _   ___   _   __| |  ___    ____
-         \___ \\ \    / /| |\ \    / /| | / _ \ | | / _  | / _ \  / _  \
-      _      \ \\ \  / / | | \ \  / / | || / \ || || / | || |_| || / | |
-      \\_____/ / \ \/ /  | |  \ \/ /  | || \_/ || || \_| |\  __ || \_| |
-       \______/   \  /   |_|   \__/   |_| \___/ |_| \_____\\_\    \_____\
-==================/ /===========================================================
-=================/ /==================================== U-l-t-i-m-a-t-e =======
-                /_/
-                ' >${work_dir}/parameter_input
+  echo "${Programme_header}" >${work_dir}/parameter_input
   echo "
 SETTINGS:
 
@@ -910,6 +1098,7 @@ SETTINGS:
                           Lambda: ${lambda}
                   Cluster method: ${cluster_method_display}
                  Infer optimal k: ${infer_optimal_k}
+      No. bootstrapping datasets: ${bs_num}
                          Threads: ${thread}
                             Seed: ${iqtree_seed_number}
 " >>${work_dir}/parameter_input
@@ -1064,7 +1253,7 @@ Time stamp: ${time_stamp}
         cat ${codon_permute_dir}/${file_name} | sed -n "2,${line_number}p" | cut -c 11-${seq_ending} >${codon_permute_dir}/aln.ori
         # Permute codon
         i=1
-        while [[ "${i}" -le 100 ]]; do
+        while [[ "${i}" -le "${bs_num}" ]]; do
           echo "${i}" >>${codon_permute_dir}/list
           ((i++))
         done
@@ -1109,7 +1298,7 @@ Time stamp: ${time_stamp}
           # Permute the codon
           echo "${pos_array}" >${codon_permute_dir}/pos.array
           ArrayPermutation_temp=$(echo "${ArrayPermutation}" | sed "s/seednumber/${seed_number}/")
-          echo -e "The seed for the generation of the 100-replicate permutation data is: ${seed_number}." >${work_dir}/impMsg.txt
+          echo -e "The seed for the generation of the ${bs_num}-replicate permutation data is: ${seed_number}." >${work_dir}/impMsg.txt
           Rscript <(echo "${ArrayPermutation_temp}")
           cat ${codon_permute_dir}/*shuffle >${codon_permute_dir}/pos.result
           rm -f ${codon_permute_dir}/*shuffle
@@ -1139,7 +1328,7 @@ Time stamp: ${time_stamp}
         fi
       fi
     else
-      fseqboot -sequence ${work_dir}/aln_concatenation.phy -outfile outfile -test o -seqtype d -rewriteformat p -reps 101 -seed ${seed_number} >/dev/null
+      fseqboot -sequence ${work_dir}/aln_concatenation.phy -outfile outfile -test o -seqtype d -rewriteformat p -reps $((bs_num + 1)) -seed ${seed_number} >/dev/null
       OTU_number=6
       MakeDatasets ${work_dir} ${OTU_number} ${seed_number}
       rm -f ${work_dir}/outfile
@@ -1409,7 +1598,8 @@ Time stamp: ${time_stamp}
 
       # Generate logLkhforR.csv file
       cd ${current_dir}/value
-      Rscript <(echo "${loglkhImprovementMake}") 2>&1 >/dev/null
+      loglkhImprovementMake_temp=$(echo "${loglkhImprovementMake}" | sed "s/args1/${bs_num}/")
+      Rscript <(echo "${loglkhImprovementMake_temp}") 2>&1 >/dev/null
 
       # File sorting
       mv ${current_dir}/value ${current_dir}/logLikelihood
@@ -1418,7 +1608,8 @@ Time stamp: ${time_stamp}
 
       # Plot graph
       cd ${current_dir}
-      Rscript <(echo "${loglkhImprovementPlot}") 2>&1 >/dev/null
+      loglkhImprovementPlot_temp=$(echo "${loglkhImprovementPlot}" | sed "s/args1/${bs_num}/")
+      Rscript <(echo "${loglkhImprovementPlot_temp}") 2>&1 >/dev/null
       cd ${work_dir}/Analysis/
       Rscript -e 'library("clustree"); dd <- read.table("cluster.summary", header = TRUE); p <- clustree(dd, prefix = "k"); pdf(NULL); ggsave("cluster_summary.svg", width = 12, height = 12)' 2>&1 >/dev/null
 
@@ -1466,7 +1657,7 @@ Time stamp: ${time_stamp}
   echo "
 Part ${step}. Post analysis operation"
   SECONDS=0
-  read -p "continue? " continue_Yes_No
+  read -p "continue?(Y/n) " continue_Yes_No
   #continue_Yes_No="y"
   if [[ "${continue_Yes_No}" == "y" ]]; then
     if [[ "${infer_optimal_k}" == "clustree" ]]; then
@@ -1547,13 +1738,13 @@ $(($duration / 60)) minutes,$(($duration % 60)) seconds elapsed.
 Time stamp: ${time_stamp}
 
 --------------------------------------------------------------------------------"
-  fi
 
   ########################
   # Part 6. File sorting
   ########################
-  mv ${work_dir}/gnTrees_collection.tre ${work_dir}/supergnTrees_collection.tre
-  mv ${work_dir}/supergnTrees_collection.tre ${work_dir}/Analysis/gnTrees_collection.tre ${work_dir}/Trees/
+    mv ${work_dir}/gnTrees_collection.tre ${work_dir}/supergnTrees_collection.tre
+    mv ${work_dir}/supergnTrees_collection.tre ${work_dir}/Analysis/gnTrees_collection.tre ${work_dir}/Trees/
+  fi
   time_stamp=$(date)
   echo "
 Congratulations!!
