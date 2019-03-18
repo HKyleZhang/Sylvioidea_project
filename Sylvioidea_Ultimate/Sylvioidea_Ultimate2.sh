@@ -681,6 +681,13 @@ if [[ -z "${aln_folder}" ]] || [[ ! -d "${work_dir}/${aln_folder}" ]]; then
   echo -e "\nMsg: Some files are missing.\n"
   usage
   exit
+else
+  for aln in ${work_dir}/${aln_folder}/*.phy; do
+    if [[ -n "$(echo "${aln}" | grep -e "(\|)")" ]]; then
+      echo -e "Message: Unacceptable symbol in alignment files name."
+      exit
+    fi
+  done
 fi
 
 ## Check trees folder ##
