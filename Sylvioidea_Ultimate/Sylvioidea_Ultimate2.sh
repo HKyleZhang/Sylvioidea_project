@@ -84,6 +84,12 @@ ProbabilisticDistanceCalculator() {
 
   ## Generate a file supplement the self-comparison distance
   tree_number=$(cat ${dir}/Analysis/IQ-trees.nw | wc -l)
+  if [[ "${tree_number}" -lt 10 ]]; then
+    format=10
+  else
+    format=${tree_number}
+  fi
+
   i=1
   while [[ "${i}" -le "${tree_number}" ]]; do
     echo -e "\nTree ${i}, Tree ${i}, Alignment length NA, Distance 0\n" >>${dir}/Analysis/sc_dist.prob
@@ -121,19 +127,21 @@ ProbabilisticDistanceCalculator() {
   ## File modification
   cat tree_dist_raw.prob sc_dist.prob >tree_dist.prob
   rm -f tree_dist_raw.prob sc_dist.prob gnTrees_collection_mod.tre
+
   i=1
   while [[ "${i}" -le "${tree_number}" ]]; do
-    i_mod=$(printf "%0${#tree_number}d" "${i}")
+    i_mod=$(printf "%0${#format}d" "${i}")
     sed -i "s/Tree ${i},/Tree${i_mod}/g" tree_dist.prob
     ((i++))
   done
+
   Rscript <(echo "${ProbDistMatrix}") 2>&1 >/dev/null
 
   i=1
   while [[ "${i}" -le "${tree_number}" ]]; do
-    i_mod=$(printf "%0${#tree_number}d" "${i}")
+    i_mod=$(printf "%0${#format}d" "${i}")
     tree_name=$(cat ${dir}/Analysis/tree_name.list | sed -n "${i}p")
-    sed -i "s/${i_mod}/${tree_name}/g" ${dir}/Analysis/dist_matrix.txt
+    sed -i "s/Tree${i_mod}/${tree_name}/g" ${dir}/Analysis/dist_matrix.txt
     ((i++))
   done
   rm -f tree_name.list
@@ -647,6 +655,45 @@ ggsave("permutation_test.svg",
        height = 10
 )'
 
+# R code 9. Hierarchical clustering on Probabilistic distance
+ClusteringProbdist='
+suppressPackageStartupMessages(library(ape))
+
+dm <- read.table("dist_matrix.txt", row.names = 1)
+dm <- as.dist(dm)
+
+trees <- read.tree("IQ-trees.nw")
+cluster_number <- length(trees)
+dm.hclust <- hclust(dm, method = "ward.D2")
+svg("dendrogram.svg", width = 10, height = 10)
+plot(dm.hclust, cex = 0.6)
+dev.off()
+dm <- as.matrix(dm)
+
+dend_label_raw <- as.data.frame(dm.hclust$labels)
+dend_label <- dend_label_raw$`dm.hclust$labels`[order.dendrogram(as.dendrogram(dm.hclust))]
+dend_label <- as.data.frame(dend_label)
+write.table(
+  dend_label,
+  file = "dend.order",
+  quote = FALSE,
+  col.names = FALSE,
+  row.names = FALSE
+)
+if (cluster_number > 15) {
+  cluster_number <- 15
+}
+for (j in 1:cluster_number) {
+  cl <- cutree(dm.hclust, k = j)
+  if (j < 10) {
+    j = paste("0", j, sep = "")
+    nj = paste("k", j, ".cl", sep = "")
+  } else {
+    nj = paste("k", j, ".cl", sep = "")
+  }
+  write.table(cl, nj, quote = FALSE, col.names = FALSE)
+}'
+
 # Pre-step: Load the flags and check the settings #
 ###################################################
 while getopts "ha:b:c:d:u:L:m:k:o:p:s:t:x:" opt; do
@@ -1047,41 +1094,38 @@ if [[ "${distance_metric}" == "pd" ]] || [[ "${distance_metric}" == "pd_ex" ]]; 
     ProbabilisticDistanceCalculator ${work_dir} ${probdist_type} ${exact_distance}
   else
     ### Generate model parameters file for Probablistic distance ###
-    for i in ${work_dir}/${aln_folder}/*; do
+    for i in ${work_dir}/${aln_folder}/*.phy; do
       name=$(basename ${i})
       file_name=$(ls ${work_dir}/IQ-Tree_output/report | grep "${name}")
-      piA=$(cat ${work_dir}/IQ-Tree_output/report/${file_name} | grep "pi(A)" | cut -d "=" -f 2 | cut -d " " -f 2)
-      if [[ -z "${piA}" ]]; then
-        piA="0.25"
-      fi
-      piC=$(cat ${work_dir}/IQ-Tree_output/report/${file_name} | grep "pi(C)" | cut -d "=" -f 2 | cut -d " " -f 2)
-      if [[ -z "${piC}" ]]; then
-        piC="0.25"
-      fi
-      piG=$(cat ${work_dir}/IQ-Tree_output/report/${file_name} | grep "pi(G)" | cut -d "=" -f 2 | cut -d " " -f 2)
-      if [[ -z "${piG}" ]]; then
-        piG="0.25"
-      fi
-      piT=$(cat ${work_dir}/IQ-Tree_output/report/${file_name} | grep "pi(T)" | cut -d "=" -f 2 | cut -d " " -f 2)
-      if [[ -z "${piT}" ]]; then
-        piT="0.25"
-      fi
-      rhoAC=$(cat ${work_dir}/IQ-Tree_output/report/${file_name} | grep "A-C" | cut -d ":" -f 2 | cut -d " " -f 2)
-      rhoAG=$(cat ${work_dir}/IQ-Tree_output/report/${file_name} | grep "A-G" | cut -d ":" -f 2 | cut -d " " -f 2)
-      rhoAT=$(cat ${work_dir}/IQ-Tree_output/report/${file_name} | grep "A-T" | cut -d ":" -f 2 | cut -d " " -f 2)
-      rhoCG=$(cat ${work_dir}/IQ-Tree_output/report/${file_name} | grep "C-G" | cut -d ":" -f 2 | cut -d " " -f 2)
-      rhoCT=$(cat ${work_dir}/IQ-Tree_output/report/${file_name} | grep "C-T" | cut -d ":" -f 2 | cut -d " " -f 2)
 
-      alpha=$(cat ${work_dir}/IQ-Tree_output/report/${file_name} | grep "alpha" | cut -d ":" -f 2 | cut -d " " -f 2)
+      pi_key=(A C G T)
+      i=1
+      for a in "${pi_key[@]}"; do
+        p=$(cat ${work_dir}/IQ-Tree_output/report/${file_name} | grep -w "pi(${a})" | cut -d "=" -f 2 | cut -d " " -f 2)
+        if [[ -z "${p}" ]]; then
+          pi[$i]=0.25
+        else
+          pi[$i]=${p}
+        fi
+        ((i++))
+      done
+
+      rho_key=(A-C A-G A-T C-G C-T)
+      i=1
+      for r in "${rho_key[@]}"; do
+        rho[$i]=$(cat ${work_dir}/IQ-Tree_output/report/${file_name} | grep -w "${r}" | cut -d ":" -f 2 | cut -d " " -f 2)
+        ((i++))
+      done
+
+      alpha=$(cat ${work_dir}/IQ-Tree_output/report/${file_name} | grep -w "alpha" | cut -d ":" -f 2 | cut -d " " -f 2)
       if [[ -z "${alpha}" ]]; then
         alpha=" "
       fi
-      echo "${piA} ${piC} ${piG} ${piT} ${rhoAC} ${rhoAG} ${rhoAT} ${rhoCG} ${rhoCT} ${alpha}" >>${work_dir}/Analysis/modelParamFile.txt
+      echo "${pi[@]} ${rho[@]} ${alpha}" >>${work_dir}/Analysis/modelParamFile.txt
     done
 
     ProbabilisticDistanceCalculator ${work_dir} ${probdist_type} ${exact_distance}
   fi
-
 elif [[ "${distance_metric}" == "gd" ]]; then
   Clustering_temp=$(echo "${Clustering}" | sed "s/args1/Geodesic_distance/g" | sed "s/args3/${cluster_method}/")
 elif [[ "${distance_metric}" == "kc" ]]; then
@@ -1272,7 +1316,8 @@ else
   read -p "
   Specify the optimal number of clusters 
   for supergene tree reconstruction: " potential_k
-  if [[ -n "${potential_k}" ]] && [[ "${potential_k}" -eq "${potential_k}" ]] 2>/dev/null; then
+  tree_number=$(cat ${work_dir}/Analysis/IQ-trees.nw | wc -l)
+  if [[ -n "${potential_k}" ]] && [[ "${potential_k}" -eq "${potential_k}" ]] && [[ "${potential_k}" -le "${tree_number}" ]] 2>/dev/null; then
     potential_k=$(echo "k$(printf "%02d" "${potential_k}")")
   else
     echo -e "\nMessage:The number of clusters failed to be specified."
